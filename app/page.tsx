@@ -227,7 +227,7 @@ export default function MeetFlow() {
   const [newName, setNewName] = useState("");
   const [open, setOpen] = useState(false);
   const [viewId, setViewId] = useState("xiao-liang");
-
+  const [reminderSlots, setReminderSlots] = useState<TimeSlot[]>([]);
   const me = members.find((m) => m.id === "me")!;
   const others = members.filter((m) => m.id !== "me");
   const viewing = members.find((m) => m.id === viewId) ?? others[0];
@@ -268,6 +268,15 @@ export default function MeetFlow() {
     setOpen(false);
   }
 
+
+
+  function toggleReminder(slotValue: TimeSlot) {
+    setReminderSlots((prev) =>
+      prev.includes(slotValue)
+        ? prev.filter((s) => s !== slotValue)
+        : [...prev, slotValue]
+    );
+  }
   return (
     <div className="min-h-screen bg-background">
       {/* ── Header ── */}
@@ -479,20 +488,52 @@ export default function MeetFlow() {
             </Card>
 
             {commonSlots.length > 0 && (
-              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                {commonSlots.map((s) => {
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {commonSlots.map((s) => {
+                const [d, h] = s.split("-").map(Number);
+                const reminded = reminderSlots.includes(s);
+
+                return (
+                  <div
+                    key={s}
+                    className="flex items-center justify-between gap-3 px-3 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200"
+                  >
+                    <span className="text-sm">
+                      {DAYS[d]} {h}:00–{h + 1}:00
+                    </span>
+                    <Button
+                      size="sm"
+                      variant={reminded ? "secondary" : "outline"}
+                      onClick={() => toggleReminder(s)}
+                    >
+                      {reminded ? "已提醒" : "提醒我"}
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {reminderSlots.length > 0 && (
+            <Card className="mt-6">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold">我的提醒清單</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {reminderSlots.map((s) => {
                   const [d, h] = s.split("-").map(Number);
                   return (
                     <div
                       key={s}
-                      className="text-sm px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200"
+                      className="text-sm px-3 py-2 rounded-md border bg-muted/30"
                     >
                       {DAYS[d]} {h}:00–{h + 1}:00
                     </div>
                   );
                 })}
-              </div>
-            )}
+              </CardContent>
+            </Card>
+          )}
           </TabsContent>
         </Tabs>
       </main>
