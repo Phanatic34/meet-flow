@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -84,17 +84,57 @@ const INITIAL_MEMBERS: Member[] = [
 
 // ─── Schedule Grid Component ──────────────────────────────────────────────────
 
+type DragState = {
+  startDay: number;
+  startHourIdx: number;
+  curDay: number;
+  curHourIdx: number;
+  filling: boolean; // true = turning slots ON, false = turning OFF
+};
+
 function ScheduleGrid({
   availability,
-  onToggle,
+  onBatchToggle,
   emerald = false,
 }: {
   availability: TimeSlot[];
-  onToggle?: (day: number, hour: number) => void;
+  onBatchToggle?: (slots: TimeSlot[], fill: boolean) => void;
   emerald?: boolean;
 }) {
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragging = useRef(false);
+
+  // Commit the selection when mouse is released anywhere
+  useEffect(() => {
+    function handleMouseUp() {
+      if (!dragging.current || !drag) return;
+      const d0 = Math.min(drag.startDay, drag.curDay);
+      const d1 = Math.max(drag.startDay, drag.curDay);
+      const h0 = Math.min(drag.startHourIdx, drag.curHourIdx);
+      const h1 = Math.max(drag.startHourIdx, drag.curHourIdx);
+      const selected: TimeSlot[] = [];
+      for (let d = d0; d <= d1; d++)
+        for (let hi = h0; hi <= h1; hi++)
+          selected.push(slot(d, HOURS[hi]));
+      onBatchToggle?.(selected, drag.filling);
+      dragging.current = false;
+      setDrag(null);
+    }
+    document.addEventListener("mouseup", handleMouseUp);
+    return () => document.removeEventListener("mouseup", handleMouseUp);
+  }, [drag, onBatchToggle]);
+
+  function inDragRect(d: number, hi: number): boolean {
+    if (!drag) return false;
+    const d0 = Math.min(drag.startDay, drag.curDay);
+    const d1 = Math.max(drag.startDay, drag.curDay);
+    const h0 = Math.min(drag.startHourIdx, drag.curHourIdx);
+    const h1 = Math.max(drag.startHourIdx, drag.curHourIdx);
+    return d >= d0 && d <= d1 && hi >= h0 && hi <= h1;
+  }
+
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto select-none">
       <table className="w-full text-sm border-collapse">
         <thead>
           <tr>
@@ -107,7 +147,7 @@ function ScheduleGrid({
           </tr>
         </thead>
         <tbody>
-          {HOURS.map((h) => (
+          {HOURS.map((h, hi) => (
             <tr key={h}>
               <td className="text-right pr-3 text-muted-foreground text-xs py-0.5 whitespace-nowrap">
                 {h}:00
@@ -115,16 +155,44 @@ function ScheduleGrid({
               {DAYS.map((_, d) => {
                 const s = slot(d, h);
                 const active = availability.includes(s);
-                const cellClass = active
-                  ? emerald
+                const inRect = inDragRect(d, hi);
+
+                let cellClass: string;
+                if (inRect) {
+                  // Preview: show what the result will be
+                  cellClass = drag!.filling
+                    ? "bg-primary/60 border-primary/60"
+                    : "bg-muted border-border opacity-40";
+                } else if (active) {
+                  cellClass = emerald
                     ? "bg-emerald-400 border-emerald-400"
-                    : "bg-primary border-primary"
-                  : "bg-muted border-border hover:bg-muted/60";
+                    : "bg-primary border-primary";
+                } else {
+                  cellClass = "bg-muted border-border hover:bg-muted/60";
+                }
+
                 return (
                   <td key={d} className="p-0.5">
                     <div
-                      className={`h-8 rounded border transition-colors ${cellClass} ${onToggle ? "cursor-pointer" : "cursor-default"}`}
-                      onClick={() => onToggle?.(d, h)}
+                      className={`h-8 rounded border transition-colors ${cellClass} ${onBatchToggle ? "cursor-pointer" : "cursor-default"}`}
+                      onMouseDown={(e) => {
+                        if (!onBatchToggle) return;
+                        e.preventDefault();
+                        dragging.current = true;
+                        setDrag({
+                          startDay: d,
+                          startHourIdx: hi,
+                          curDay: d,
+                          curHourIdx: hi,
+                          filling: !active,
+                        });
+                      }}
+                      onMouseOver={() => {
+                        if (!dragging.current) return;
+                        setDrag((prev) =>
+                          prev ? { ...prev, curDay: d, curHourIdx: hi } : prev
+                        );
+                      }}
                     />
                   </td>
                 );
@@ -159,7 +227,7 @@ export default function MeetFlow() {
   const [newName, setNewName] = useState("");
   const [open, setOpen] = useState(false);
   const [viewId, setViewId] = useState("xiao-liang");
-
+  const [reminderSlots, setReminderSlots] = useState<TimeSlot[]>([]);
   const me = members.find((m) => m.id === "me")!;
   const others = members.filter((m) => m.id !== "me");
   const viewing = members.find((m) => m.id === viewId) ?? others[0];
@@ -170,17 +238,16 @@ export default function MeetFlow() {
     ).map((h) => slot(d, h))
   );
 
-  function toggleMySlot(day: number, hour: number) {
-    const s = slot(day, hour);
+  function batchToggleMySlots(slots: TimeSlot[], fill: boolean) {
     setMembers((prev) =>
       prev.map((m) =>
         m.id !== "me"
           ? m
           : {
               ...m,
-              availability: m.availability.includes(s)
-                ? m.availability.filter((x) => x !== s)
-                : [...m.availability, s],
+              availability: fill
+                ? [...new Set([...m.availability, ...slots])]
+                : m.availability.filter((x) => !slots.includes(x)),
             }
       )
     );
@@ -201,6 +268,15 @@ export default function MeetFlow() {
     setOpen(false);
   }
 
+
+
+  function toggleReminder(slotValue: TimeSlot) {
+    setReminderSlots((prev) =>
+      prev.includes(slotValue)
+        ? prev.filter((s) => s !== slotValue)
+        : [...prev, slotValue]
+    );
+  }
   return (
     <div className="min-h-screen bg-background">
       {/* ── Header ── */}
@@ -305,7 +381,7 @@ export default function MeetFlow() {
             <div className="mb-5">
               <h2 className="text-base font-semibold">我的時間表</h2>
               <p className="text-sm text-muted-foreground mt-0.5">
-                點擊格子來切換你的空閒時段
+                點擊或拖曳選取矩形範圍來批次切換空閒時段
               </p>
             </div>
             <Card>
@@ -318,7 +394,7 @@ export default function MeetFlow() {
                 />
                 <ScheduleGrid
                   availability={me.availability}
-                  onToggle={toggleMySlot}
+                  onBatchToggle={batchToggleMySlots}
                 />
               </CardContent>
             </Card>
@@ -412,20 +488,52 @@ export default function MeetFlow() {
             </Card>
 
             {commonSlots.length > 0 && (
-              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
-                {commonSlots.map((s) => {
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+              {commonSlots.map((s) => {
+                const [d, h] = s.split("-").map(Number);
+                const reminded = reminderSlots.includes(s);
+
+                return (
+                  <div
+                    key={s}
+                    className="flex items-center justify-between gap-3 px-3 py-3 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200"
+                  >
+                    <span className="text-sm">
+                      {DAYS[d]} {h}:00–{h + 1}:00
+                    </span>
+                    <Button
+                      size="sm"
+                      variant={reminded ? "secondary" : "outline"}
+                      onClick={() => toggleReminder(s)}
+                    >
+                      {reminded ? "已提醒" : "提醒我"}
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {reminderSlots.length > 0 && (
+            <Card className="mt-6">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold">我的提醒清單</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {reminderSlots.map((s) => {
                   const [d, h] = s.split("-").map(Number);
                   return (
                     <div
                       key={s}
-                      className="text-sm px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 dark:bg-emerald-950 dark:border-emerald-800 dark:text-emerald-200"
+                      className="text-sm px-3 py-2 rounded-md border bg-muted/30"
                     >
                       {DAYS[d]} {h}:00–{h + 1}:00
                     </div>
                   );
                 })}
-              </div>
-            )}
+              </CardContent>
+            </Card>
+          )}
           </TabsContent>
         </Tabs>
       </main>
